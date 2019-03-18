@@ -39,7 +39,7 @@
 	//return null;
 //}
 
-__device__ bool row_check(const int* _board, int _board_root, int _row, int _entry, int loc) 
+__device__ bool row_check_dev(const int* _board, int _board_root, int _row, int _entry, int loc) 
 {
 	for (int i = _row * _board_root; i < _row * _board_root + _board_root; i++) {
 		if (i != loc && _board[i] == _entry) 
@@ -51,7 +51,7 @@ __device__ bool row_check(const int* _board, int _board_root, int _row, int _ent
 	return true;
 }
 
-__device__ bool column_check(const int* _board, int _board_root, int _col, int _entry, int loc) 
+__device__ bool column_check_dev(const int* _board, int _board_root, int _col, int _entry, int loc) 
 {
 	for (int i = _col; i < _board_root * _board_root - (_board_root - _col); i += _board_root) {
 		if (i != loc && _board[i] == _entry) {
@@ -62,7 +62,7 @@ __device__ bool column_check(const int* _board, int _board_root, int _col, int _
 	return true;
 }
 
-__device__ bool grid_check(const int* _board, int _board_root, int _start_row, int _start_col, int _entry, int loc)
+__device__ bool grid_check_dev(const int* _board, int _board_root, int _start_row, int _start_col, int _entry, int loc)
 {
 	int sub_grid_x = _start_row / SUB_BOARD_DIM; // 0, 1, or 2
 	int sub_grid_y = _start_col / SUB_BOARD_DIM; // 0, 1, or 2
@@ -80,11 +80,11 @@ __device__ bool grid_check(const int* _board, int _board_root, int _start_row, i
 	return true;
 }
 
-__device__ bool is_legal_entry(const int* _board, int _board_root, int _row, int _col, int _entry, int loc) 
+__device__ bool is_legal_entry_dev(const int* _board, int _board_root, int _row, int _col, int _entry, int loc) 
 {
-	return row_check(_board, _board_root, _row, _entry, loc) &&
-		column_check(_board, _board_root, _col, _entry, loc) &&
-		grid_check(_board, _board_root, _row, _col, _entry, loc);
+	return row_check_dev(_board, _board_root, _row, _entry, loc) &&
+		column_check_dev(_board, _board_root, _col, _entry, loc) &&
+		grid_check_dev(_board, _board_root, _row, _col, _entry, loc);
 }
 
 __device__ bool is_legal(bool ** _board)
@@ -103,6 +103,23 @@ __device__ bool is_legal(bool ** _board)
 	//		return false;
 	//	}
 	//}
+	return true;
+}
+
+__device__ bool is_legal_1D(int *_board)
+{
+	for (int i = 0; i < BOARD_SIZE; i++) {
+		int row = i / SUB_BOARD_SIZE;
+		int col = i % SUB_BOARD_SIZE;
+
+		if (_board[i] != 0 && !is_legal_entry_dev(_board, SUB_BOARD_SIZE, row, col, _board[i], i))
+		{
+			//print_board();
+			//print_cell(i);
+			//throw;
+			return false;
+		}
+	}
 	return true;
 }
 
@@ -948,11 +965,45 @@ __global__ void CrooksSolver(bool ** _board, int *_emptyCells, int * _row_vals, 
 	//find_unique_potentials(_board, _emptyCells, _row_vals, _col_vals, _pooled_pots); //If we can get this function to work we can get crooks to work
 }
 
-__global__ void SpawnBoards(int * all_boards, int * start_board)
+__host__ std::stack<int*> SpawnBoards(Board *_board)
 {
-	//Go through start board looking for empty cell
-	//Find valid values for this empty cell
-	//For each valid value, copy the start_board + that cell filled in with the found valid value into all_boards at the correct index
+	int* start_state_board = _board->board_to_ints();
+	std::stack<int*> board_stack;
+	board_stack.push(start_state_board);
+
+	int count = 0;
+
+	while (true) {
+		// Get the current state of board we will work on
+		int* curr_board = board_stack.top();
+		int next_cell = _board->find_next_empty_cell(curr_board);
+		if (next_cell == -1) {
+			curr_board = nullptr;
+			break;
+		}
+
+		board_stack.pop();
+
+		std::set<int> potential_values = _board->get_potential_set(next_cell);
+
+		for (auto it = potential_values.begin(); it != potential_values.end(); it++) {
+			int* next_board = _board->create_copy(curr_board);
+			next_board[next_cell] = *it;
+			board_stack.push(next_board);
+			++count;
+		}
+	}
+
+	//// allocate memory for returning array of boards to run on GPU
+	//int* ret_boards = (int *)malloc((BOARD_SIZE)* count * sizeof(int));
+
+	//// pop board_stack into array
+	//for (int i = 0; i < count; i++) {
+	//	ret_boards[i] = *board_stack.top();
+	//	board_stack.pop();
+	//}
+
+	return board_stack;
 }
 
 __global__ void BackTracker(int * all_boards, int * solved_board)
@@ -968,6 +1019,12 @@ __global__ void BackTracker(int * all_boards, int * solved_board)
 	//If stuck, then quit
 }
 
+__global__ void ValidBoards(int *_all_boards, int *_solved_board) {
+	int t_idx = blockDim.x * blockIdx.x + threadIdx.x;
+	if (is_legal_1D(&_all_boards[t_idx])) {
+		_solved_board = &_all_boards[t_idx];
+	}
+}
 
 #pragma region Boards
 /*Boards*/
@@ -1247,33 +1304,42 @@ bool BackTrack(Board * _board, int emptyCells)
 	if (cudaStatus != cudaSuccess) {
 		fprintf(stderr, "cudaSetDevice failed!  Do you have a CUDA-capable GPU installed?");
 	}
-	int * device_all_boards;
-	int * host_all_boards = (int *)malloc((BOARD_SIZE) * (emptyCells * SUB_BOARD_SIZE) * sizeof(int));
 
-	int * host_start_board = _board->board_to_ints(); //Convert _board into ints
-	int * device_start_board;
-	cudaMalloc((void **)&device_all_boards, (BOARD_SIZE) * (emptyCells * SUB_BOARD_SIZE) * sizeof(int)); //Spawn 9 boards for every empty cell as worst case scenario every empty cell has 9 possibilities
-	cudaMalloc((void **)&device_start_board, (BOARD_SIZE) * sizeof(int));
+	std::stack<int*> spawned = SpawnBoards(_board);
+	int *all_boards =(int *)malloc((BOARD_SIZE) * spawned.size() * sizeof(int));
+	//int *host_all_boards = (int *)malloc((BOARD_SIZE) * spawned.size() * sizeof(int));
+	int *host_answer_board = (int *)malloc(BOARD_SIZE * sizeof(int));
+	int *device_answer_board;
+
+	// Transfer stack of boards to array
+	for (int i = 0; i < spawned.size(); i++) {
+		all_boards[i] = *spawned.top();
+		spawned.pop();
+	}
+
+	//int * host_start_board = _board->board_to_ints(); //Convert _board into ints
+	cudaMalloc((void **)&all_boards, (BOARD_SIZE) * spawned.size() * sizeof(int));
+	cudaMalloc((void **)&device_answer_board, (BOARD_SIZE) * sizeof(int));
 
 	// start memory + solver timing
 	cudaEventRecord(startMem);
 
-	//Copy 2D bool array to device
-	cudaStatus = cudaMemcpy(device_start_board, host_start_board, (BOARD_SIZE) * sizeof(int), cudaMemcpyHostToDevice);
-	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaMemcpy failed!");
-	}
+	////Copy 2D bool array to device
+	//cudaStatus = cudaMemcpy(device_start_board, host_start_board, (BOARD_SIZE) * sizeof(int), cudaMemcpyHostToDevice);
+	//if (cudaStatus != cudaSuccess) {
+	//	fprintf(stderr, "cudaMemcpy failed!");
+	//}
 
 	//Start timing math only
 	cudaEventRecord(startOp);
 
 	int threads = 32;
-	int blocks = (emptyCells * SUB_BOARD_SIZE / threads) + 1;
+	int blocks = (spawned.size() * SUB_BOARD_SIZE / threads) + 1;
 	dim3 dimGrid(1, 1);
 	dim3 dimBlock(blocks, threads);
 
-	//Call Kernel
-	SpawnBoards << <dimGrid, dimBlock >> > (device_all_boards, device_start_board);
+	////Call Kernel
+	ValidBoards<<<dimGrid, dimBlock>>>(all_boards, device_answer_board);
 
 
 	cudaStatus = cudaGetLastError();
@@ -1285,8 +1351,11 @@ bool BackTrack(Board * _board, int emptyCells)
 	cudaEventRecord(stopOp);
 
 	//Copy back to host
-	cudaMemcpy(host_all_boards, device_all_boards, (BOARD_SIZE) * (emptyCells * SUB_BOARD_SIZE) * sizeof(int), cudaMemcpyDeviceToHost);
+	cudaMemcpy(host_answer_board, device_answer_board, (BOARD_SIZE) * spawned.size() * sizeof(int), cudaMemcpyDeviceToHost);
 
+	Board *ans = new Board();
+	ans->set_board(host_answer_board);
+	ans->print_board();
 
 	//Stop memory timing: sync must go here or it loses these timing events
 	cudaEventRecord(stopMem);
@@ -1303,44 +1372,45 @@ bool BackTrack(Board * _board, int emptyCells)
 	std::cout << "Spawn Boards Time:\n";
 	PrintTiming(millisecondsOp, millisecondsMem);
 
-	/******************************************BackTrack section*****************************************/
+	///******************************************BackTrack section*****************************************/
 
-	int * device_solved_board;
-	int * host_solved_board = (int *)malloc((BOARD_SIZE) * sizeof(int));
-	cudaMalloc((void **)&device_solved_board, (BOARD_SIZE) * sizeof(int));
+	//int * device_solved_board;
+	//int * host_solved_board = (int *)malloc((BOARD_SIZE) * sizeof(int));
+	//cudaMalloc((void **)&device_solved_board, (BOARD_SIZE) * sizeof(int));
 
-	// start memory + solver timing
-	cudaEventRecord(startMem);
+	//// start memory + solver timing
+	//cudaEventRecord(startMem);
 
-	//Start timing math only
-	cudaEventRecord(startOp);
+	////Start timing math only
+	//cudaEventRecord(startOp);
 
-	//Call Kernel
-	BackTracker << <dimGrid, dimBlock >> > (device_all_boards, device_solved_board); //Needs more variables
+	////Call Kernel
+	//BackTracker << <dimGrid, dimBlock >> > (device_all_boards, device_solved_board); //Needs more variables
 
-	//Stop puzzle only timing
-	cudaEventRecord(stopOp);
+	////Stop puzzle only timing
+	//cudaEventRecord(stopOp);
 
-	//Copy back to host
-	cudaMemcpy(host_solved_board, device_solved_board, (BOARD_SIZE) * sizeof(int), cudaMemcpyDeviceToHost);
+	////Copy back to host
+	//cudaMemcpy(host_solved_board, device_solved_board, (BOARD_SIZE) * sizeof(int), cudaMemcpyDeviceToHost);
 
-	//Stop memory timing: sync must go here or it loses these timing events
-	cudaEventRecord(stopMem);
-	cudaStatus = cudaDeviceSynchronize();
+	////Stop memory timing: sync must go here or it loses these timing events
+	//cudaEventRecord(stopMem);
+	//cudaStatus = cudaDeviceSynchronize();
 
-	//Convert board back into Board class
-	for (int i = 0; i < BOARD_SIZE; i++)
-	{
-		for (int j = 1; j < SUB_BOARD_SIZE + 1; j++)
-		{
-			_board->board[i][j] = false; //Set all values to false so the real true value will appear
-		}
-		_board->board[i][0] = true;
-		_board->board[i][host_solved_board[i]] = true;
-	}
+	////Convert board back into Board class
+	//for (int i = 0; i < BOARD_SIZE; i++)
+	//{
+	//	for (int j = 1; j < SUB_BOARD_SIZE + 1; j++)
+	//	{
+	//		_board->board[i][j] = false; //Set all values to false so the real true value will appear
+	//	}
+	//	_board->board[i][0] = true;
+	//	_board->board[i][host_solved_board[i]] = true;
+	//}
 
-	free(host_all_boards);
-	cudaFree(device_all_boards);
+	free(all_boards);
+	free(host_answer_board);
+	cudaFree(device_answer_board);
 	return false;
 }
 

@@ -659,51 +659,51 @@ int* Board::board_to_ints() {
 }
 
 
-//bool row_check(const int* _board, int _board_root, int _row, int _entry, int loc) {
-//	for (int i = _row * _board_root; i < _row * _board_root + _board_root; i++) {
-//		if (i != loc && _board[i] == _entry) {
-//			std::cout << "row check failed at index: " << i << " value: " << _entry << " row: " << _row  << std::endl;
-//			return false;
-//		}
-//	}
-//
-//	return true;
-//}
-//
-//bool column_check(const int* _board, int _board_root, int _col, int _entry, int loc) {
-//	for (int i = _col; i < _board_root * _board_root - (_board_root - _col); i += _board_root) {
-//		if (i != loc && _board[i] == _entry) {
-//			std::cout << "col check failed at index: " << i << " value: " << _entry << " col: " << _col << std::endl;
-//			return false;
-//		}
-//	}
-//
-//	return true;
-//}
-//
-//bool grid_check(const int* _board, int _board_root, int _start_row, int _start_col, int _entry, int loc) {
-//	int sub_grid_x = _start_row / SUB_BOARD_DIM; // 0, 1, or 2
-//	int sub_grid_y = _start_col / SUB_BOARD_DIM; // 0, 1, or 2
-//	int grid_start = (sub_grid_x * SUB_BOARD_SIZE * SUB_BOARD_DIM) + (sub_grid_y * SUB_BOARD_DIM);
-//	for (int i = 0; i < 3; i++) {
-//		for (int j = 0; j < 3; j++) {
-//			//		  start ind     rows of grid         col
-//			int ind = grid_start + (i * SUB_BOARD_SIZE) + j;
-//			if (ind != loc && _board[ind] == _entry) {
-//				std::cout << "grid check failed at index: " << ind << " value: " << _entry << " row, col: " << _start_row << ", " << _start_col << std::endl;
-//				return false;
-//			}
-//		}
-//	}
-//
-//	return true;
-//}
-//
-//bool is_legal_entry(const int* _board, int _board_root, int _row, int _col, int _entry, int loc) {
-//	return row_check(_board, _board_root, _row, _entry, loc) &&
-//		column_check(_board, _board_root, _col, _entry, loc) &&
-//		grid_check(_board, _board_root, _row, _col, _entry, loc);
-//}
+bool Board::row_check(const int* _board, int _board_root, int _row, int _entry, int loc) {
+	for (int i = _row * _board_root; i < _row * _board_root + _board_root; i++) {
+		if (i != loc && _board[i] == _entry) {
+			std::cout << "row check failed at index: " << i << " value: " << _entry << " row: " << _row  << std::endl;
+			return false;
+		}
+	}
+
+	return true;
+}
+
+bool Board::column_check(const int* _board, int _board_root, int _col, int _entry, int loc) {
+	for (int i = _col; i < _board_root * _board_root - (_board_root - _col); i += _board_root) {
+		if (i != loc && _board[i] == _entry) {
+			std::cout << "col check failed at index: " << i << " value: " << _entry << " col: " << _col << std::endl;
+			return false;
+		}
+	}
+
+	return true;
+}
+
+bool Board::grid_check(const int* _board, int _board_root, int _start_row, int _start_col, int _entry, int loc) {
+	int sub_grid_x = _start_row / SUB_BOARD_DIM; // 0, 1, or 2
+	int sub_grid_y = _start_col / SUB_BOARD_DIM; // 0, 1, or 2
+	int grid_start = (sub_grid_x * SUB_BOARD_SIZE * SUB_BOARD_DIM) + (sub_grid_y * SUB_BOARD_DIM);
+	for (int i = 0; i < 3; i++) {
+		for (int j = 0; j < 3; j++) {
+			//		  start ind     rows of grid         col
+			int ind = grid_start + (i * SUB_BOARD_SIZE) + j;
+			if (ind != loc && _board[ind] == _entry) {
+				std::cout << "grid check failed at index: " << ind << " value: " << _entry << " row, col: " << _start_row << ", " << _start_col << std::endl;
+				return false;
+			}
+		}
+	}
+
+	return true;
+}
+
+bool Board::is_legal_entry(const int* _board, int _board_root, int _row, int _col, int _entry, int loc) {
+	return row_check(_board, _board_root, _row, _entry, loc) &&
+		column_check(_board, _board_root, _col, _entry, loc) &&
+		grid_check(_board, _board_root, _row, _col, _entry, loc);
+}
 
 
 
@@ -791,4 +791,44 @@ bool Board::is_complete() {
 		return true;
 	else
 		return false;
+}
+
+int Board::find_first_empty() {
+	for (int i = 0; i < BOARD_SIZE; i++) {
+		if (board[i][0] == false) {
+			return i;
+		}
+	}
+
+	return -1;
+}
+
+int* Board::create_copy(int*board) {
+	int* copy = new int[BOARD_SIZE];
+	for (int i = 0; i < BOARD_SIZE; i++) {
+		copy[i] = board[i];
+	}
+
+	return copy;
+}
+
+int Board::find_next_empty_cell(int* board) {
+	for (int i = 0; i < BOARD_SIZE; i++) {
+		if (board[i] == 0)
+			return i;
+	}
+	return -1;
+}
+
+bool Board::is_legal_1d(int *board) {
+	for (int i = 0; i < BOARD_SIZE; i++) {
+		int row = i / SUB_BOARD_SIZE;
+		int col = i % SUB_BOARD_SIZE;
+
+		if (board[i] != 0 && !is_legal_entry(board, SUB_BOARD_SIZE, row, col, board[i], i)) {
+			//print_board_1d(board);
+			return false;
+		}
+	}
+	return true;
 }

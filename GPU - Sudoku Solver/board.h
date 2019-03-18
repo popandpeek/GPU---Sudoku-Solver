@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <iostream>
 #include <set>
+#include <stack>
 
 #pragma once
 
@@ -108,4 +109,20 @@ public:
 	int get_empty_cell_count();
 
 	bool is_complete();
+
+	int find_first_empty();
+
+	int * create_copy(int * board);
+
+	int find_next_empty_cell(int*);
+
+	bool is_legal_1d(int * board);
+
+	bool is_legal_entry(const int * _board, int _board_root, int _row, int _col, int _entry, int loc);
+
+	bool row_check(const int* _board, int _board_root, int _row, int _entry, int loc);
+
+	bool column_check(const int* _board, int _board_root, int _col, int _entry, int loc);
+
+	bool grid_check(const int* _board, int _board_root, int _start_row, int _start_col, int _entry, int loc);
 };
