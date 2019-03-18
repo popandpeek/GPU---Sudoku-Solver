@@ -941,11 +941,31 @@ __device__ void find_unique_potentials(bool ** _board, int * _emptyCells, int* _
 	}
 }
 
-__global__ void SudukoSolver(bool ** _board, int *_emptyCells, int * _row_vals, int * _col_vals, int * _grid_vals, int * _pooled_pots)
+__global__ void CrooksSolver(bool ** _board, int *_emptyCells, int * _row_vals, int * _col_vals, int * _grid_vals, int * _pooled_pots)
 {
 	annotate_potential_entries(_board, _emptyCells, _row_vals, _col_vals, _grid_vals);
 	remove_doubles_and_triples_by_sub_grid(_board, _row_vals, _col_vals, _grid_vals);
-	find_unique_potentials(_board, _emptyCells, _row_vals, _col_vals, _pooled_pots);
+	//find_unique_potentials(_board, _emptyCells, _row_vals, _col_vals, _pooled_pots); //If we can get this function to work we can get crooks to work
+}
+
+__global__ void SpawnBoards(int * all_boards, int * start_board)
+{
+	//Go through start board looking for empty cell
+	//Find valid values for this empty cell
+	//For each valid value, copy the start_board + that cell filled in with the found valid value into all_boards at the correct index
+}
+
+__global__ void BackTracker(int * all_boards, int * solved_board)
+{
+	//Grab a board from all_boards
+	//Find an empty cell
+	//Attempt a number
+		//If valid, substract from empty cell count and find next empty cell
+		//If not valid, try the other numbers
+		//If no number is valid, increase empty cell count and return to the last empty cell tried
+			//To return to last empty cell tried we need to have a list of all the positions of the empty cells and use this to find the next empty cell so we don't get lost
+	//If no more empty cells, set the solved_board and inform other threads via a shared memory variable or some other method that a solution was found and for them to quit
+	//If stuck, then quit
 }
 
 
@@ -1059,10 +1079,10 @@ int* diabolical_test_answer = new int[81]{ 2, 9, 5, 7, 4, 3, 8, 6, 1,
 #pragma endregion
 
 
-Board *SetBoard()
+Board *SetBoard(int * _board)
 {
 	Board *board = new Board();
-	board->set_board(test_board_easy);
+	board->set_board(_board);
 	board->print_board();
 	return board;
 }
@@ -1074,7 +1094,7 @@ void PrintTiming(float _opTime, float _memAndOpTime)
 	std::cout << "\tOperation time: " << _opTime << " milliseconds.\n" << std::endl;
 }
 
-void SolvePuzzle(Board *_board)
+int ReducePossibilities(Board *_board)
 {
 	cudaEvent_t startMem, stopMem, startOp, stopOp;
 	cudaEventCreate(&startMem);
@@ -1098,6 +1118,7 @@ void SolvePuzzle(Board *_board)
 	}
 
 	int * emptyCells = (int *)malloc(sizeof(int));
+	int previousEmptyCells;
 	emptyCells[0] = _board->empty_cells;
 	int * device_emptyCells;
 	cudaMalloc((void**)&device_emptyCells, sizeof(int));
@@ -1112,11 +1133,12 @@ void SolvePuzzle(Board *_board)
 	int * pooled_pots;
 	cudaMalloc((void**)&pooled_pots, SUB_BOARD_SIZE * sizeof(int));
 
+	float totalOpTime = 0;
+	float totalMemTime = 0;
 
-	int loop_count_easy = 0;
-	while (_board->is_complete() == false)
+	while (true)
 	{
-
+		previousEmptyCells = emptyCells[0];
 		// start memory + solver timing
 		cudaEventRecord(startMem);
 
@@ -1148,7 +1170,7 @@ void SolvePuzzle(Board *_board)
 
 
 		//Call Kernel
-		SudukoSolver << <1, 1 >> > (device_board, device_emptyCells, row_val, col_val, grid_val, pooled_pots);
+		CrooksSolver << <1, 1 >> > (device_board, device_emptyCells, row_val, col_val, grid_val, pooled_pots);
 
 
 
@@ -1186,46 +1208,165 @@ void SolvePuzzle(Board *_board)
 		cudaEventElapsedTime(&millisecondsOp, startOp, stopOp);
 		cudaEventElapsedTime(&millisecondsMem, startMem, stopMem);
 
-		//Print Timings
-		PrintTiming(millisecondsOp, millisecondsMem);
+		totalOpTime += millisecondsOp;
+		totalMemTime += millisecondsMem;
 
-		if (loop_count_easy++ > 30) {
-			break;
+		if (emptyCells[0] == 0)
+		{
+			//Print Timings
+			std::cout << "Reduce Possibilities Time:\n";
+			PrintTiming(totalOpTime, totalMemTime);
+			return 0;
+		}
+		if (emptyCells[0] == previousEmptyCells)
+		{
+			//Print Timings
+			std::cout << "Reduce Possibilities Time:\n";
+			PrintTiming(totalOpTime, totalMemTime);
+			return previousEmptyCells;
 		}
 
 	}
+	return previousEmptyCells;
+}
+
+bool BackTrack(Board * _board, int emptyCells)
+{
+	//WARNING: current DS does not hold potential values - only actual values
+
+
+	cudaEvent_t startMem, stopMem, startOp, stopOp;
+	cudaEventCreate(&startMem);
+	cudaEventCreate(&stopMem);
+	cudaEventCreate(&startOp);
+	cudaEventCreate(&stopOp);
+
+	cudaError_t cudaStatus;
+
+	cudaStatus = cudaSetDevice(0);
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaSetDevice failed!  Do you have a CUDA-capable GPU installed?");
+	}
+	int * device_all_boards;
+	int * host_all_boards = (int *)malloc((BOARD_SIZE) * (emptyCells * SUB_BOARD_SIZE) * sizeof(int));
+
+	int * host_start_board = _board->board_to_ints(); //Convert _board into ints
+	int * device_start_board;
+	cudaMalloc((void **)&device_all_boards, (BOARD_SIZE) * (emptyCells * SUB_BOARD_SIZE) * sizeof(int)); //Spawn 9 boards for every empty cell as worst case scenario every empty cell has 9 possibilities
+	cudaMalloc((void **)&device_start_board, (BOARD_SIZE) * sizeof(int));
+
+	// start memory + solver timing
+	cudaEventRecord(startMem);
+
+	//Copy 2D bool array to device
+	cudaStatus = cudaMemcpy(device_start_board, host_start_board, (BOARD_SIZE) * sizeof(int), cudaMemcpyHostToDevice);
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMemcpy failed!");
+	}
+
+	//Start timing math only
+	cudaEventRecord(startOp);
+
+	int threads = 32;
+	int blocks = (emptyCells * SUB_BOARD_SIZE / threads) + 1;
+	dim3 dimGrid(1, 1);
+	dim3 dimBlock(blocks, threads);
+
+	//Call Kernel
+	SpawnBoards << <dimGrid, dimBlock >> > (device_all_boards, device_start_board);
+
+
+	cudaStatus = cudaGetLastError();
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "addKernel launch failed: %s\n", cudaGetErrorString(cudaStatus));
+	}
+
+	//Stop puzzle only timing
+	cudaEventRecord(stopOp);
+
+	//Copy back to host
+	cudaMemcpy(host_all_boards, device_all_boards, (BOARD_SIZE) * (emptyCells * SUB_BOARD_SIZE) * sizeof(int), cudaMemcpyDeviceToHost);
+
+
+	//Stop memory timing: sync must go here or it loses these timing events
+	cudaEventRecord(stopMem);
+	cudaStatus = cudaDeviceSynchronize();
+	if (cudaStatus != cudaSuccess)
+	{
+		fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching SudukoSolver!\n\n", cudaStatus);
+	}
+
+	float millisecondsOp = 0;
+	float millisecondsMem = 0;
+	cudaEventElapsedTime(&millisecondsOp, startOp, stopOp);
+	cudaEventElapsedTime(&millisecondsMem, startMem, stopMem);
+	std::cout << "Spawn Boards Time:\n";
+	PrintTiming(millisecondsOp, millisecondsMem);
+
+	/******************************************BackTrack section*****************************************/
+
+	int * device_solved_board;
+	int * host_solved_board = (int *)malloc((BOARD_SIZE) * sizeof(int));
+	cudaMalloc((void **)&device_solved_board, (BOARD_SIZE) * sizeof(int));
+
+	// start memory + solver timing
+	cudaEventRecord(startMem);
+
+	//Start timing math only
+	cudaEventRecord(startOp);
+
+	//Call Kernel
+	BackTracker << <dimGrid, dimBlock >> > (device_all_boards, device_solved_board); //Needs more variables
+
+	//Stop puzzle only timing
+	cudaEventRecord(stopOp);
+
+	//Copy back to host
+	cudaMemcpy(host_solved_board, device_solved_board, (BOARD_SIZE) * sizeof(int), cudaMemcpyDeviceToHost);
+
+	//Stop memory timing: sync must go here or it loses these timing events
+	cudaEventRecord(stopMem);
+	cudaStatus = cudaDeviceSynchronize();
+
+	//Convert board back into Board class
+	for (int i = 0; i < BOARD_SIZE; i++)
+	{
+		for (int j = 1; j < SUB_BOARD_SIZE + 1; j++)
+		{
+			_board->board[i][j] = false; //Set all values to false so the real true value will appear
+		}
+		_board->board[i][0] = true;
+		_board->board[i][host_solved_board[i]] = true;
+	}
+
+	free(host_all_boards);
+	cudaFree(device_all_boards);
+	return false;
 }
 
 int main()
 {
+	bool solved;
+	int emptySpacesLeft;
 	// Instantiates, Sets, and Prints out the initial game board
-	Board *easy_sudoku = SetBoard();
-	int loop_count_easy = 0;
-
-	SolvePuzzle(easy_sudoku);
-
-	easy_sudoku->print_board();
-
-	//std::cout << "Loops: " << loop_count_easy << " | Empty Cells: ";
-	//std::cout << easy_sudoku->empty_cells << std::endl;
-
-
-
-	/*while (easy_sudoku->is_complete() == false) 
+	Board *puzzle = SetBoard(test_board_medium);
+	emptySpacesLeft = ReducePossibilities(puzzle);
+	if (emptySpacesLeft == 0) //0 empty spaces
 	{
-		easy_sudoku->annotate_potential_entries();
-		easy_sudoku->remove_doubles_and_triples_by_sub_grid();
-		easy_sudoku->find_unique_potentials();
-		std::cout << "Loops: " << ++loop_count_easy << " | Empty Cells: ";
-		std::cout << easy_sudoku->empty_cells << std::endl;
-		if (loop_count_easy > 15) {
-			break;
+		std::cout << "Puzzled solved using only crooks.\n";
+		puzzle->print_board();
+	}
+	else
+	{
+		solved = BackTrack(puzzle, emptySpacesLeft);
+		if (solved)
+		{
+			std::cout << "Puzzled solved using crooks + backtracking.\n";
+			puzzle->print_board();
 		}
 	}
 
-
-	std::cout << "Easy Board is correct: " << easy_sudoku->is_legal() << std::endl;*/
-	//easy_sudoku->print_board();
-
+	
+	puzzle->print_board(); // for testing
 
 }
