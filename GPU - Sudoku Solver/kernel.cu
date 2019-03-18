@@ -197,6 +197,11 @@ __device__ int * get_potential_set(bool ** _board, int _loc, int &count, int * _
 {
 	count = 0;
 
+	for (int i = 0; i < SUB_BOARD_SIZE; i++)
+	{
+		_pots_set[i] = 0;
+	}
+
 	//Get count
 	if (_board[_loc][0] == false) {
 		for (int i = 1; i < SUB_BOARD_SIZE + 1; i++) {
@@ -460,7 +465,7 @@ __device__ void remove_potential_values_from_col(bool ** _board, int* _vals, int
 
 // Helper method to remove specified potential values from a cell
 
-__device__ void remove_doubles_and_triples_by_sub_grid(bool ** _board, int * _pots_set)
+__device__ void remove_doubles_and_triples_by_sub_grid(bool ** _board, int * _pots_set1, int * _pots_set2, int * _pots_set3)
 {
 	is_legal(_board);
 	// Iterate by sub grid 
@@ -477,11 +482,11 @@ __device__ void remove_doubles_and_triples_by_sub_grid(bool ** _board, int * _po
 				for (int row = 0; row < SUB_BOARD_DIM; row++) 
 				{
 					int cell1Count = 0;
-					int *cell_1 = get_potential_set(_board, row * SUB_BOARD_SIZE + grid_start, cell1Count, _pots_set);
+					int *cell_1 = get_potential_set(_board, row * SUB_BOARD_SIZE + grid_start, cell1Count, _pots_set1);
 					int cell2Count = 0;
-					int *cell_2 = get_potential_set(_board, row * SUB_BOARD_SIZE + grid_start + 1, cell2Count, _pots_set);
+					int *cell_2 = get_potential_set(_board, row * SUB_BOARD_SIZE + grid_start + 1, cell2Count, _pots_set2);
 					int cell3Count = 0;
-					int *cell_3 = get_potential_set(_board, row * SUB_BOARD_SIZE + grid_start + 2, cell3Count, _pots_set);
+					int *cell_3 = get_potential_set(_board, row * SUB_BOARD_SIZE + grid_start + 2, cell3Count, _pots_set3);
 
 					// check for triples
 					if (cell1Count == 3 && cell2Count == 3 && cell3Count == 3)
@@ -612,11 +617,11 @@ __device__ void remove_doubles_and_triples_by_sub_grid(bool ** _board, int * _po
 				for (int col = 0; col < SUB_BOARD_DIM; col++) 
 				{
 					int cell1Count = 0;
-					int*cell_1 = get_potential_set(_board, col + grid_start, cell1Count, _pots_set);
+					int*cell_1 = get_potential_set(_board, col + grid_start, cell1Count, _pots_set1);
 					int cell2Count = 0;
-					int*cell_2 = get_potential_set(_board, col + grid_start + SUB_BOARD_SIZE, cell2Count, _pots_set);
+					int*cell_2 = get_potential_set(_board, col + grid_start + SUB_BOARD_SIZE, cell2Count, _pots_set2);
 					int cell3Count = 0;
-					int*cell_3 = get_potential_set(_board, col + grid_start + SUB_BOARD_SIZE * 2, cell3Count, _pots_set);
+					int*cell_3 = get_potential_set(_board, col + grid_start + SUB_BOARD_SIZE * 2, cell3Count, _pots_set3);
 
 					// check for triples
 					if (cell1Count == 3 && cell2Count == 3 && cell3Count == 3) 
@@ -753,7 +758,7 @@ __device__ void remove_doubles_and_triples_by_sub_grid(bool ** _board, int * _po
 	}
 }
 
-__device__ void find_unique_cell_potential(bool ** _board, int _loc, int *_emptyCells, int * _pots_set, int * _pooled_pots)
+__device__ void find_unique_cell_potential(bool ** _board, int _loc, int *_emptyCells, int * _pots_set, int *pots_set2, int * _pooled_pots)
 {
 	is_legal(_board);
 	// do nothing if the board cell is already filled
@@ -772,7 +777,7 @@ __device__ void find_unique_cell_potential(bool ** _board, int _loc, int *_empty
 		if (row_ind != _loc) 
 		{
 			int cell_setCount = 0;
-			int* cell_set = get_potential_set(_board, row_ind, cell_setCount, _pots_set);
+			int* cell_set = get_potential_set(_board, row_ind, cell_setCount, pots_set2);
 
 			pooled_potentialsCount = cell_setCount;
 			for (int j = 0; j < pooled_potentialsCount; j++)
@@ -826,7 +831,7 @@ __device__ void find_unique_cell_potential(bool ** _board, int _loc, int *_empty
 		if (col_ind != _loc)
 		{
 			int cell_setCount = 0;
-			int* cell_set = get_potential_set(_board, col_ind, cell_setCount, _pots_set);
+			int* cell_set = get_potential_set(_board, col_ind, cell_setCount, pots_set2);
 			pooled_potentialsCount = cell_setCount;
 			for (int j = 0; j < pooled_potentialsCount; j++)
 			{
@@ -882,7 +887,7 @@ __device__ void find_unique_cell_potential(bool ** _board, int _loc, int *_empty
 			if (ind != _loc) 
 			{
 				int cell_setCount = 0;
-				int* cell_set = get_potential_set(_board, ind, cell_setCount, _pots_set);
+				int* cell_set = get_potential_set(_board, ind, cell_setCount, pots_set2);
 				pooled_potentialsCount = cell_setCount;
 				for (int j = 0; j < pooled_potentialsCount; j++)
 				{
@@ -928,19 +933,19 @@ __device__ void find_unique_cell_potential(bool ** _board, int _loc, int *_empty
 }
 
 // performs unique potential on the entire board
-__device__ void find_unique_potentials(bool ** _board, int * _emptyCells, int* _pots_set, int * _pooled_pots)
+__device__ void find_unique_potentials(bool ** _board, int * _emptyCells, int* _pots_set, int* pots_set2, int * _pooled_pots)
 {
 	for (int i = 0; i < BOARD_SIZE; i++) 
 	{
-		find_unique_cell_potential(_board, i, _emptyCells, _pots_set, _pooled_pots);
+		find_unique_cell_potential(_board, i, _emptyCells, _pots_set, pots_set2, _pooled_pots);
 	}
 }
 
-__global__ void SudukoSolver(bool ** _board, int *_emptyCells, int * _row_vals, int * _col_vals, int * _grid_vals, int * _pots_set, int * _pooled_pots)
+__global__ void SudukoSolver(bool ** _board, int *_emptyCells, int * _row_vals, int * _col_vals, int * _grid_vals, int * _pooled_pots)
 {
 	annotate_potential_entries(_board, _emptyCells, _row_vals, _col_vals, _grid_vals);
-	remove_doubles_and_triples_by_sub_grid(_board, _pots_set);
-	find_unique_potentials(_board, _emptyCells, _pots_set, _pooled_pots);
+	remove_doubles_and_triples_by_sub_grid(_board, _row_vals, _col_vals, _grid_vals);
+	find_unique_potentials(_board, _emptyCells, _row_vals, _col_vals, _pooled_pots);
 }
 
 
@@ -1104,8 +1109,6 @@ void SolvePuzzle(Board *_board)
 	int * grid_val;
 	cudaMalloc((void**)&grid_val, SUB_BOARD_SIZE * sizeof(int));
 
-	int * pots_set;
-	cudaMalloc((void**)&pots_set, SUB_BOARD_SIZE * sizeof(int));
 	int * pooled_pots;
 	cudaMalloc((void**)&pooled_pots, SUB_BOARD_SIZE * sizeof(int));
 
@@ -1145,7 +1148,7 @@ void SolvePuzzle(Board *_board)
 
 
 		//Call Kernel
-		SudukoSolver << <1, 1 >> > (device_board, device_emptyCells, row_val, col_val, grid_val, pots_set, pooled_pots);
+		SudukoSolver << <1, 1 >> > (device_board, device_emptyCells, row_val, col_val, grid_val, pooled_pots);
 
 
 
