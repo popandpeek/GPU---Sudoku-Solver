@@ -10,8 +10,10 @@
 #include "board.h"
 
 Board::Board() {
-	for (int i = 0; i < BOARD_SIZE; i++) {
-		board[i] = new bool[SUB_BOARD_SIZE + 1];
+	for (int i = 0; i < BOARD_SIZE; i++) 
+	{
+		board[i] = (bool *)malloc((SUB_BOARD_SIZE + 1) * sizeof(bool));
+			//new bool[SUB_BOARD_SIZE + 1];
 		for (int j = 0; j < SUB_BOARD_SIZE + 1; j++) {
 			board[i][j] = false;
 		}
@@ -263,7 +265,8 @@ void Board::annotate_potential_entries() {
 int Board::get_entry(int _loc) {
 	int ret_val = 0;
 	if (board[_loc][0] == true) {
-		for (int i = 1; i < SUB_BOARD_SIZE + 1; i++) {
+		for (int i = 1; i < SUB_BOARD_SIZE + 1; i++) 
+		{
 			if (board[_loc][i] == true) {
 				ret_val = i;
 			}
@@ -274,10 +277,12 @@ int Board::get_entry(int _loc) {
 }
 
 // Helper function to get a cells potential or filled value(s)
-int* Board::get_potentials(int _loc) {
+int* Board::get_potentials(int _loc) 
+{
 	if (board[_loc][0] == false) {
 		to_pass = new int[SUB_BOARD_SIZE];
-		for (int i = 0; i < SUB_BOARD_SIZE; i++) {
+		for (int i = 0; i < SUB_BOARD_SIZE; i++) 
+		{
 			if (board[_loc][i] == true) {
 				to_pass[i] = i;
 			}
