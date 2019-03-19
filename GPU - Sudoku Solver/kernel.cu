@@ -1379,12 +1379,12 @@ bool BackTrack(Board * _board, int emptyCells)
 		{
 			int* next_board = spawned.top();
 			all_boards[i][j] = next_board[j];
-			if (cudaStatus != cudaSuccess) {
-				fprintf(stderr, "cudaMemcpy failed!");
-			}
 			//std::cout << all_boards[i][j] << std::endl;
 		}
 		cudaStatus = cudaMemcpy(host_temp_all_boards[i], all_boards[i], (BOARD_SIZE) * sizeof(int), cudaMemcpyHostToDevice);
+		if (cudaStatus != cudaSuccess) {
+			fprintf(stderr, "cudaMemcpy failed!");
+		}
 		spawned.pop();
 	}
 
