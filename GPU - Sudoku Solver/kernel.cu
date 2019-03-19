@@ -132,10 +132,10 @@ int* diabolical_test_answer = new int[81]{ 2, 9, 5, 7, 4, 3, 8, 6, 1,
 #pragma endregion
 
 
-__device__ bool row_check_dev(const int* _board, int _board_root, int _row, int _entry, int loc)
+__device__ bool row_check_dev(const int* _board, int _board_root, int _row, int _entry, int loc, int _boardStart)
 {
 	for (int i = _row * _board_root; i < _row * _board_root + _board_root; i++) {
-		if (i != loc && _board[i] == _entry)
+		if (i != loc && _board[i + _boardStart] == _entry)
 		{
 			return false;
 		}
@@ -144,10 +144,10 @@ __device__ bool row_check_dev(const int* _board, int _board_root, int _row, int 
 	return true;
 }
 
-__device__ bool column_check_dev(const int* _board, int _board_root, int _col, int _entry, int loc)
+__device__ bool column_check_dev(const int* _board, int _board_root, int _col, int _entry, int loc, int _boardStart)
 {
 	for (int i = _col; i < _board_root * _board_root - (_board_root - _col); i += _board_root) {
-		if (i != loc && _board[i] == _entry) {
+		if (i != loc && _board[i + _boardStart] == _entry) {
 			return false;
 		}
 	}
@@ -155,7 +155,7 @@ __device__ bool column_check_dev(const int* _board, int _board_root, int _col, i
 	return true;
 }
 
-__device__ bool grid_check_dev(const int* _board, int _board_root, int _start_row, int _start_col, int _entry, int loc)
+__device__ bool grid_check_dev(const int* _board, int _board_root, int _start_row, int _start_col, int _entry, int loc, int _boardStart)
 {
 	int sub_grid_x = _start_row / SUB_BOARD_DIM; // 0, 1, or 2
 	int sub_grid_y = _start_col / SUB_BOARD_DIM; // 0, 1, or 2
@@ -164,7 +164,7 @@ __device__ bool grid_check_dev(const int* _board, int _board_root, int _start_ro
 		for (int j = 0; j < 3; j++) {
 			//		  start ind     rows of grid         col
 			int ind = grid_start + (i * SUB_BOARD_SIZE) + j;
-			if (ind != loc && _board[ind] == _entry) {
+			if (ind != loc && _board[ind + _boardStart] == _entry) {
 				return false;
 			}
 		}
@@ -173,17 +173,17 @@ __device__ bool grid_check_dev(const int* _board, int _board_root, int _start_ro
 	return true;
 }
 
-__device__ bool is_legal_entry_dev(const int* _board, int _board_root, int _row, int _col, int _entry, int loc)
+__device__ bool is_legal_entry_dev(const int* _board, int _board_root, int _row, int _col, int _entry, int loc, int _boardStart)
 {
-	return row_check_dev(_board, _board_root, _row, _entry, loc) &&
-		column_check_dev(_board, _board_root, _col, _entry, loc) &&
-		grid_check_dev(_board, _board_root, _row, _col, _entry, loc);
+	return row_check_dev(_board, _board_root, _row, _entry, loc, _boardStart) &&
+		column_check_dev(_board, _board_root, _col, _entry, loc, _boardStart) &&
+		grid_check_dev(_board, _board_root, _row, _col, _entry, loc, _boardStart);
 }
 
 // Returns whether or not it is valid to put a value in specified location for this board
-__device__ bool IsLegal(int *_board, int _loc, int _val)
+__device__ bool IsLegal(int *_board, int _loc, int _val, int _boardStart)
 {
-	if (is_legal_entry_dev(_board, SUB_BOARD_SIZE, _loc / SUB_BOARD_DIM, _loc % SUB_BOARD_DIM, _val, _loc)) {
+	if (is_legal_entry_dev(_board, SUB_BOARD_SIZE, _loc / SUB_BOARD_DIM + _boardStart, _loc % SUB_BOARD_DIM + _boardStart, _val, _loc, _boardStart)) {
 		_board[_loc] = _val;
 		return true;
 	}
@@ -192,9 +192,10 @@ __device__ bool IsLegal(int *_board, int _loc, int _val)
 }
 
 // Find next empty cell in passed in board
-__device__ int FindNextEmptyCell(int* board) {
-	for (int i = 0; i < BOARD_SIZE; i++) {
-		if (board[i] == 0) {
+__device__ int FindNextEmptyCell(int* board, int _boardStart) {
+	for (int i = 0; i < BOARD_SIZE; i++) 
+	{
+		if (board[i + _boardStart] == 0) {
 			return i;
 		}
 	}
@@ -212,29 +213,26 @@ __global__ void GenerateBoardsByCell(int *old_boards, int old_board_num, int *ne
 	// maybe should use a for loop in the case a thread has to do more than one thread. Will this ever occur?
 	if (t_idx < old_board_num) {
 		int old_board_start = t_idx * BOARD_SIZE;
-		int* thread_old_board = (int*)malloc(sizeof(int) * BOARD_SIZE);
 
-		for (int i = 0; i < SUB_BOARD_SIZE; i++) { // read prev board into a sudoku sized local array
-			thread_old_board[i] = old_boards[old_board_start + i];
-		}
 
 		// find next index we can add to
-		int empty_cell_ind = FindNextEmptyCell(thread_old_board);
+		int empty_cell_ind = FindNextEmptyCell(old_boards, old_board_start);
 		if (empty_cell_ind == -1) { // Board is full
 			return;
 		}
 
 		// Now try all possible numbers in this cell that is legal
 		for (int i = 1; i <= 9; i++) {
-			if (IsLegal(thread_old_board, empty_cell_ind, i)) { // number can go in this cell
+			if (IsLegal(old_boards, empty_cell_ind, i, old_board_start)) { // number can go in this cell
 
 				// where to start appending for the new board
 				int new_board_offset = atomicAdd(new_board_num, 1); // increment amount of boards at the new depth
 
-				for (int j = 0; j < BOARD_SIZE; j++) {
+				for (int j = 0; j < BOARD_SIZE; j++) 
+				{
 					int ind = (new_board_offset * BOARD_SIZE) + j;
 
-					new_boards[ind] = thread_old_board[j];
+					new_boards[ind] = old_boards[j + old_board_start];
 				}
 			}
 		}
@@ -247,17 +245,20 @@ __global__ void SolveBoard(int *boards, int total_boards, int* solution) {
 	int t_idx = blockDim.x * blockIdx.x + threadIdx.x;
 
 	// Each thread does DFS on 1 board
-	if (t_idx < total_boards) {
+	if (t_idx < total_boards) 
+	{
 		int board_start = t_idx * BOARD_SIZE;
 		int* thread_board = (int*)malloc(sizeof(int) * BOARD_SIZE);
 
-		for (int i = 0; i < SUB_BOARD_SIZE; i++) { // read prev board into a sudoku sized local array
+		for (int i = 0; i < SUB_BOARD_SIZE; i++)// read prev board into a sudoku sized local array
+		{ 
 			thread_board[i] = boards[board_start + i];
 		}
 
 
 
 	}
+
 }
 
 
@@ -305,6 +306,7 @@ void solve(int *board, int depth) {
 		GenerateBoardsByCell << <num_blocks, THREAD_PER_BLOCK >> > (old_boards, old_board_num, new_boards, next_board_num);
 
 		// old and new boards are swapped in order for us to reuse the memory since we only care about the last depth
+		
 		int* temp_board = old_boards;
 		old_boards = new_boards;
 		new_boards = temp_board;
@@ -341,5 +343,6 @@ void solve(int *board, int depth) {
 int main()
 {
 	// Solve medium sized board and go to depth 7 of BFS
-	solve(test_board_medium, 7);
+	//solve(test_board_medium, 7);
+	solve(test_board_medium, 1);
 }
