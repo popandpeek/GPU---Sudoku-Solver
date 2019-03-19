@@ -949,6 +949,39 @@ __device__ void find_unique_cell_potential(bool ** _board, int _loc, int *_empty
 	}
 }
 
+void print_board_1d(int *board) {
+
+	char* border = new char[26]{ "|-------+-------+-------|" };
+
+	std::cout << border << std::endl;
+	int split = sqrt(9);
+	for (int i = 0; i < 9 * 9; i++) {
+		if (i % 9 == 0) {
+			std::cout << "| ";
+		}
+		else if (i % split == 0) {
+			std::cout << "| ";
+		}
+
+		int value = board[i];
+		if (value != 0) {
+			std::cout << value << " ";
+		}
+		else {
+			std::cout << ". ";
+		}
+
+		if (i % 9 == 9 - 1) {
+			std::cout << "|" << std::endl;
+
+			if (((i + 1) % (9 * 9 / split)) == 0) {
+				std::cout << border << std::endl;
+			}
+		}
+	}
+	std::cout << std::endl;
+}
+
 // performs unique potential on the entire board
 __device__ void find_unique_potentials(bool ** _board, int * _emptyCells, int* _pots_set, int* pots_set2, int * _pooled_pots)
 {
@@ -1022,7 +1055,9 @@ __global__ void BackTracker(int * all_boards, int * solved_board)
 __global__ void ValidBoards(int *_all_boards, int *_solved_board) {
 	int t_idx = blockDim.x * blockIdx.x + threadIdx.x;
 	if (is_legal_1D(&_all_boards[t_idx])) {
-		_solved_board = &_all_boards[t_idx];
+		for (int i = 0; i < 81; i++) {
+			_solved_board[i] = _all_boards[i];
+		}
 	}
 }
 
@@ -1306,17 +1341,30 @@ bool BackTrack(Board * _board, int emptyCells)
 	}
 
 	std::stack<int*> spawned = SpawnBoards(_board);
-	int *all_boards =(int *)malloc((BOARD_SIZE) * spawned.size() * sizeof(int));
+	int size = spawned.size();
+	int **all_boards = new int*[size];
+	for (int i = 0; i < spawned.size(); i++) {
+		all_boards[i] = new int[81];
+	}
 	//int *host_all_boards = (int *)malloc((BOARD_SIZE) * spawned.size() * sizeof(int));
 	int *host_answer_board = (int *)malloc(BOARD_SIZE * sizeof(int));
 	int *device_answer_board;
 
 	// Transfer stack of boards to array
-	for (int i = 0; i < spawned.size(); i++) {
-		all_boards[i] = *spawned.top();
+
+	for (int i = 0; i < size; i++) {
+			
+		for (int j = 0; j < 81; j++) {
+			int* next_board = spawned.top();
+			all_boards[i][j] = next_board[j];
+			std::cout << all_boards[i][j] << std::endl;
+		}
 		spawned.pop();
 	}
 
+	for (int i = 0; i < size; i++) {
+		cudaMalloc((void **)&all_boards[i], (BOARD_SIZE) * sizeof(int));
+	}
 	//int * host_start_board = _board->board_to_ints(); //Convert _board into ints
 	cudaMalloc((void **)&all_boards, (BOARD_SIZE) * spawned.size() * sizeof(int));
 	cudaMalloc((void **)&device_answer_board, (BOARD_SIZE) * sizeof(int));
@@ -1339,7 +1387,7 @@ bool BackTrack(Board * _board, int emptyCells)
 	dim3 dimBlock(blocks, threads);
 
 	////Call Kernel
-	ValidBoards<<<dimGrid, dimBlock>>>(all_boards, device_answer_board);
+	//ValidBoards<<<1, 1>>>(all_boards, device_answer_board);
 
 
 	cudaStatus = cudaGetLastError();
@@ -1352,6 +1400,8 @@ bool BackTrack(Board * _board, int emptyCells)
 
 	//Copy back to host
 	cudaMemcpy(host_answer_board, device_answer_board, (BOARD_SIZE) * spawned.size() * sizeof(int), cudaMemcpyDeviceToHost);
+
+	print_board_1d(host_answer_board);
 
 	Board *ans = new Board();
 	ans->set_board(host_answer_board);
