@@ -12,6 +12,7 @@
 #include <chrono>
 #include <string>
 #include <stack>
+#include <queue>
 
 // Function to return integer array of board state
 //__device__ void board_to_ints(bool ** _board) //was int *
@@ -1000,35 +1001,106 @@ __global__ void CrooksSolver(bool ** _board, int *_emptyCells, int * _row_vals, 
 	//find_unique_potentials(_board, _emptyCells, _row_vals, _col_vals, _pooled_pots); //If we can get this function to work we can get crooks to work
 }
 
-__host__ std::stack<int*> SpawnBoards(Board *_board)
+bool row_check(const int* _board, int _board_root, int _row, int _entry, int loc) {
+	for (int i = _row * _board_root; i < _row * _board_root + _board_root; i++) {
+		if (i != loc && _board[i] == _entry) {
+			//std::cout << "row check failed at index: " << i << " value: " << _entry << " row: " << _row << std::endl;
+			return false;
+		}
+	}
+
+	return true;
+}
+
+bool column_check(const int* _board, int _board_root, int _col, int _entry, int loc) {
+	for (int i = _col; i < _board_root * _board_root - (_board_root - _col); i += _board_root) {
+		if (i != loc && _board[i] == _entry) {
+			//std::cout << "col check failed at index: " << i << " value: " << _entry << " col: " << _col << std::endl;
+			return false;
+		}
+	}
+
+	return true;
+}
+
+bool grid_check(const int* _board, int _board_root, int _start_row, int _start_col, int _entry, int loc) {
+	int sub_grid_x = _start_row / SUB_BOARD_DIM; // 0, 1, or 2
+	int sub_grid_y = _start_col / SUB_BOARD_DIM; // 0, 1, or 2
+	int grid_start = (sub_grid_x * SUB_BOARD_SIZE * SUB_BOARD_DIM) + (sub_grid_y * SUB_BOARD_DIM);
+	for (int i = 0; i < 3; i++) {
+		for (int j = 0; j < 3; j++) {
+			//		  start ind     rows of grid         col
+			int ind = grid_start + (i * SUB_BOARD_SIZE) + j;
+			if (ind != loc && _board[ind] == _entry) {
+				//std::cout << "grid check failed at index: " << ind << " value: " << _entry << " row, col: " << _start_row << ", " << _start_col << std::endl;
+				return false;
+			}
+		}
+	}
+
+	return true;
+}
+
+bool is_legal_entry(const int* _board, int _board_root, int _row, int _col, int _entry, int loc) {
+	return row_check(_board, _board_root, _row, _entry, loc) &&
+		column_check(_board, _board_root, _col, _entry, loc) &&
+		grid_check(_board, _board_root, _row, _col, _entry, loc);
+}
+
+bool is_legal(int* board) {
+	for (int i = 0; i < BOARD_SIZE; i++) {
+		int row = i / SUB_BOARD_SIZE;
+		int col = i % SUB_BOARD_SIZE;
+
+		if (board[i] != 0 && !is_legal_entry(board, SUB_BOARD_SIZE, row, col, board[i], i)) {
+			return false;
+		}
+	}
+	return true;
+}
+
+__host__ std::queue<int*> SpawnBoards(Board *_board)
 {
 	int* start_state_board = _board->board_to_ints();
+	std::queue<int*> board_queue;
 	std::stack<int*> board_stack;
-	board_stack.push(start_state_board);
+	board_queue.push(start_state_board);
 
+	int max_depth = 20;
+	int curr_depth = 0;
 	int count = 0;
 
-	while (true) 
+	while (curr_depth != max_depth)
 	{
 		// Get the current state of board we will work on
-		int* curr_board = board_stack.top();
-		int next_cell = _board->find_next_empty_cell(curr_board);
-		if (next_cell == -1) {
-			curr_board = nullptr;
-			break;
+
+		int size = board_queue.size();
+		for (int i = 0; i < size; i++) {
+			int* curr_board = board_queue.front();
+			board_queue.pop();
+
+			int next_cell = _board->find_next_empty_cell(curr_board);
+			if (next_cell == -1) {
+				curr_board = nullptr;
+				break;
+			}
+
+			std::set<int> potential_values = _board->get_potential_set(next_cell);
+
+			for (auto it = potential_values.begin(); it != potential_values.end(); it++)
+			{
+				int* next_board = _board->create_copy(curr_board);
+				next_board[next_cell] = *it;
+				if (true || is_legal(next_board)) {
+					board_queue.push(next_board);
+					++count;
+				}
+
+			}
 		}
 
-		board_stack.pop();
-
-		std::set<int> potential_values = _board->get_potential_set(next_cell);
-
-		for (auto it = potential_values.begin(); it != potential_values.end(); it++) 
-		{
-			int* next_board = _board->create_copy(curr_board);
-			next_board[next_cell] = *it;
-			board_stack.push(next_board);
-			++count;
-		}
+		curr_depth++;
+		std::cout << "Current Count at depth " << curr_depth << ": " << count << std::endl;
 	}
 
 	//// allocate memory for returning array of boards to run on GPU
@@ -1040,7 +1112,7 @@ __host__ std::stack<int*> SpawnBoards(Board *_board)
 	//	board_stack.pop();
 	//}
 
-	return board_stack;
+	return board_queue;
 }
 
 __global__ void BackTracker(int * all_boards, int * solved_board)
@@ -1346,7 +1418,7 @@ bool BackTrack(Board * _board, int emptyCells)
 		fprintf(stderr, "cudaSetDevice failed!  Do you have a CUDA-capable GPU installed?");
 	}
 
-	std::stack<int*> spawned = SpawnBoards(_board);
+	std::queue<int*> spawned = SpawnBoards(_board);
 	const int size = spawned.size();
 
 	int **all_boards = new int*[size];
@@ -1382,7 +1454,7 @@ bool BackTrack(Board * _board, int emptyCells)
 			
 		for (int j = 0; j < BOARD_SIZE; j++) 
 		{
-			int* next_board = spawned.top();
+			int* next_board = spawned.front();
 			all_boards[i][j] = next_board[j];
 			//std::cout << all_boards[i][j] << std::endl;
 		}
@@ -1486,15 +1558,20 @@ int main()
 	int emptySpacesLeft;
 	// Instantiates, Sets, and Prints out the initial game board
 	Board *puzzle = SetBoard(test_board_medium);
-	emptySpacesLeft = ReducePossibilities(puzzle);
-	if (emptySpacesLeft == 0) //0 empty spaces
+	//emptySpacesLeft = ReducePossibilities(puzzle);
+
+	puzzle->annotate_potential_entries();
+	puzzle->remove_doubles_and_triples_by_sub_grid();
+	puzzle->find_unique_potentials();
+
+	if (puzzle->empty_cells == 0) //0 empty spaces
 	{
 		std::cout << "Puzzled solved using only crooks.\n";
 		puzzle->print_board();
 	}
 	else
 	{
-		solved = BackTrack(puzzle, emptySpacesLeft);
+		solved = BackTrack(puzzle, puzzle->empty_cells);
 		if (solved)
 		{
 			std::cout << "Puzzled solved using crooks + backtracking.\n";
