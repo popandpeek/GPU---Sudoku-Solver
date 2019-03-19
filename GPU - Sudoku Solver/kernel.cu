@@ -202,7 +202,7 @@ __device__ int FindNextEmptyCell(int* board) {
 }
 
 // new boards points to the end of the filled in prev boards
-__global__ void GenerateBoardsByCell(int *prev_boards, int prev_board_num, int *new_boards, int *new_board_num) {
+__global__ void GenerateBoardsByCell(int *old_boards, int old_board_num, int *new_boards, int *new_board_num) {
 
 	// gives the previous board number to look at
 	int t_idx = blockDim.x * blockIdx.x + threadIdx.x;
@@ -210,31 +210,31 @@ __global__ void GenerateBoardsByCell(int *prev_boards, int prev_board_num, int *
 	// each thread will look at 1 previous board 
 	// thread only does work if the amount of previous boards greater than its thread num
 	// maybe should use a for loop in the case a thread has to do more than one thread. Will this ever occur?
-	if (t_idx < prev_board_num) {
-		int prev_board_start = t_idx * BOARD_SIZE;
-		int* thread_prev_board = (int*)malloc(sizeof(int) * BOARD_SIZE);
+	if (t_idx < old_board_num) {
+		int old_board_start = t_idx * BOARD_SIZE;
+		int* thread_old_board = (int*)malloc(sizeof(int) * BOARD_SIZE);
 
 		for (int i = 0; i < SUB_BOARD_SIZE; i++) { // read prev board into a sudoku sized local array
-			thread_prev_board[i] = prev_boards[prev_board_start + i];
+			thread_old_board[i] = old_boards[old_board_start + i];
 		}
 
 		// find next index we can add to
-		int empty_cell = FindNextEmptyCell(thread_prev_board);
-		if (empty_cell == -1) { // Board is full
+		int empty_cell_ind = FindNextEmptyCell(thread_old_board);
+		if (empty_cell_ind == -1) { // Board is full
 			return;
 		}
 
-		// Now try all possible numbers in this cell that islegal
+		// Now try all possible numbers in this cell that is legal
 		for (int i = 1; i <= 9; i++) {
-			if (IsLegal(thread_prev_board, empty_cell, i)) { // number can go in this cell
+			if (IsLegal(thread_old_board, empty_cell_ind, i)) { // number can go in this cell
 
 				// where to start appending for the new board
-				int new_board_offset = atomicAdd(&new_board_num, 1); // increment amount of boards at the new depth
+				int new_board_offset = atomicAdd(new_board_num, 1); // increment amount of boards at the new depth
 
 				for (int j = 0; j < BOARD_SIZE; j++) {
 					int ind = (new_board_offset * BOARD_SIZE) + j;
 
-					new_boards[ind] = thread_prev_board[j];
+					new_boards[ind] = thread_old_board[j];
 				}
 			}
 		}
@@ -242,13 +242,30 @@ __global__ void GenerateBoardsByCell(int *prev_boards, int prev_board_num, int *
 
 }
 
-__global__ void SolveBoard(int **_all_boards, int *_solved_board) {
+// Use DFS to solve specified board per thread
+__global__ void SolveBoard(int *boards, int total_boards, int* solution) {
+	int t_idx = blockDim.x * blockIdx.x + threadIdx.x;
 
+	// Each thread does DFS on 1 board
+	if (t_idx < total_boards) {
+		int board_start = t_idx * BOARD_SIZE;
+		int* thread_board = (int*)malloc(sizeof(int) * BOARD_SIZE);
+
+		for (int i = 0; i < SUB_BOARD_SIZE; i++) { // read prev board into a sudoku sized local array
+			thread_board[i] = boards[board_start + i];
+		}
+
+
+
+	}
 }
 
+
+// The main solve function to be called
 void solve(int *board, int depth) {
 
 	int h_solution[BOARD_SIZE];
+	memset(h_solution, 0, BOARD_SIZE * sizeof(int));
 
 	int *new_boards;
 	int *old_boards;
@@ -275,29 +292,50 @@ void solve(int *board, int depth) {
 	cudaMemcpy(old_boards, board, BOARD_SIZE * sizeof(int), cudaMemcpyHostToDevice);
 
 	// 1 due to starting board
-	int prev_board_num = 1;
-	int *prev_boards = new_boards;
+	int old_board_num = 1;
 	for (int i = 0; i < depth; i++) {
 
-		// Need 1 thread per 
-		int num_blocks = (prev_board_num + THREAD_PER_BLOCK - 1) / THREAD_PER_BLOCK;
+		// Need 1 thread per old board
+		int num_blocks = (old_board_num + THREAD_PER_BLOCK - 1) / THREAD_PER_BLOCK;
 
 		// need to set next board num to 0 before we start next depth
 		cudaMemset(next_board_num, 0, sizeof(int));
 
-		GenerateBoardsByCell << <num_blocks, THREAD_PER_BLOCK >> > (prev_boards, prev_board_num, new_boards, next_board_num);
+		// we will read from old boards first and put into new boards
+		GenerateBoardsByCell << <num_blocks, THREAD_PER_BLOCK >> > (old_boards, old_board_num, new_boards, next_board_num);
 
-		int* temp_board = prev_boards;
-		prev_boards = new_boards;
+		// old and new boards are swapped in order for us to reuse the memory since we only care about the last depth
+		int* temp_board = old_boards;
+		old_boards = new_boards;
 		new_boards = temp_board;
 
 		// update the amount of boards in previous depth for next iteration
-		cudaMemcpy(&prev_board_num, next_board_num, sizeof(int), cudaMemcpyDeviceToHost);
+		cudaMemcpy(&old_board_num, next_board_num, sizeof(int), cudaMemcpyDeviceToHost);
 	}
 
 
 	// DFS on GPU
-	// Working on it...
+	// total amount of boards is just the boards in last depth
+	int total_board_num = old_board_num;
+	//cudaMemcpy(&total_board_num, next_board_num, sizeof(int), cudaMemcpyDeviceToHost);
+
+	int num_blocks = (total_board_num + THREAD_PER_BLOCK - 1) / THREAD_PER_BLOCK;
+
+	SolveBoard << <num_blocks, THREAD_PER_BLOCK >> > (old_boards, total_board_num, solution);
+
+	cudaDeviceSynchronize();
+
+	// copy the devicce solution to the host
+	cudaMemcpy(h_solution, solution, BOARD_SIZE * sizeof(int), cudaMemcpyDeviceToHost);
+
+	// Print board?
+
+	cudaFree(new_boards);
+	cudaFree(&old_boards);
+	cudaFree(&solution);
+	cudaFree(&next_board_num);
+
+	return;
 }
 
 int main()
