@@ -1008,7 +1008,8 @@ __host__ std::stack<int*> SpawnBoards(Board *_board)
 
 	int count = 0;
 
-	while (true) {
+	while (true) 
+	{
 		// Get the current state of board we will work on
 		int* curr_board = board_stack.top();
 		int next_cell = _board->find_next_empty_cell(curr_board);
@@ -1021,7 +1022,8 @@ __host__ std::stack<int*> SpawnBoards(Board *_board)
 
 		std::set<int> potential_values = _board->get_potential_set(next_cell);
 
-		for (auto it = potential_values.begin(); it != potential_values.end(); it++) {
+		for (auto it = potential_values.begin(); it != potential_values.end(); it++) 
+		{
 			int* next_board = _board->create_copy(curr_board);
 			next_board[next_cell] = *it;
 			board_stack.push(next_board);
@@ -1059,7 +1061,10 @@ __global__ void ValidBoards(int **_all_boards, int *_solved_board)
 	int t_idx = blockDim.x * blockIdx.x + threadIdx.x;
 	if (is_legal_1D(_all_boards[t_idx])) 
 	{
-		_solved_board = _all_boards[t_idx];
+		for (int i = 0; i < BOARD_SIZE; i++)
+		{
+			_solved_board[i] = _all_boards[t_idx][i];
+		}
 	}
 }
 
@@ -1354,8 +1359,8 @@ bool BackTrack(Board * _board, int emptyCells)
 	int *device_answer_board;
 	cudaMalloc((void **)&device_answer_board, (BOARD_SIZE) * sizeof(int));
 	//All boards
-	//int **host_temp_all_boards = (int **)malloc(size * sizeof(int*));
-	int **host_temp_all_boards = new int*[size];
+	int **host_temp_all_boards = (int **)malloc(size * sizeof(int*));
+	//int **host_temp_all_boards = new int*[size];
 	int **device_all_boards;
 	cudaMalloc((void **)&device_all_boards, (size) * sizeof(int *));
 	for (int i = 0; i < size; i++)
