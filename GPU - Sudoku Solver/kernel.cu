@@ -245,21 +245,45 @@ __global__ void SolveBoard(int *boards, int total_boards, int* solution) {
 	int t_idx = blockDim.x * blockIdx.x + threadIdx.x;
 
 	// Each thread does DFS on 1 board
-	if (t_idx < total_boards) 
-	{
+	if (t_idx < total_boards) {
 		int board_start = t_idx * BOARD_SIZE;
-		int* thread_board = (int*)malloc(sizeof(int) * BOARD_SIZE);
+		int* thread_board = (int*)malloc(sizeof(int) * BOARD_SIZE); // local board for ease
 
-		for (int i = 0; i < SUB_BOARD_SIZE; i++)// read prev board into a sudoku sized local array
-		{ 
+		int empty_cells = 0; // total empty cells in this board
+		int* empty_indices = (int*)malloc(sizeof(int) * BOARD_SIZE); // theoretical biggest size where entire board is empty
+
+		for (int i = 0; i < BOARD_SIZE; i++) { // read prev board into a sudoku sized local array
+
 			thread_board[i] = boards[board_start + i];
+			if (thread_board[i] == 0) {
+				empty_indices[empty_cells] = i; // Store the indices where board is empty
+				empty_cells++;
+			}
 		}
 
+		int empty_cells_filled = 0;
+		while (empty_cells_filled < empty_cells) {
+			int next_cell = empty_indices[empty_cells_filled];
 
+			thread_board[next_cell] += 1; // Try numbers 1 through 9 until it passes is IsLegal
 
+			// TODO: Needs to be configured with no malloc
+			if (true /*IsLegal(thread_board, next_cell, thread_board[next_cell])*/) {
+				empty_cells_filled++;
+			}
+			else if (thread_board[next_cell] >= BOARD_SIZE) {
+				thread_board[next_cell] = 0;
+				empty_cells_filled--;
+			}
+		}
+		if (empty_cells_filled == empty_cells) { // all empty cells filled so we allocate solution and are done
+			for (int i = 0; i < BOARD_SIZE; i++) {
+				solution[i] = thread_board[i];
+			}
+		}
 	}
-
 }
+
 
 
 // The main solve function to be called
@@ -306,7 +330,6 @@ void solve(int *board, int depth) {
 		GenerateBoardsByCell << <num_blocks, THREAD_PER_BLOCK >> > (old_boards, old_board_num, new_boards, next_board_num);
 
 		// old and new boards are swapped in order for us to reuse the memory since we only care about the last depth
-		
 		int* temp_board = old_boards;
 		old_boards = new_boards;
 		new_boards = temp_board;
@@ -327,7 +350,7 @@ void solve(int *board, int depth) {
 
 	cudaDeviceSynchronize();
 
-	// copy the devicce solution to the host
+	// copy the device solution to the host
 	cudaMemcpy(h_solution, solution, BOARD_SIZE * sizeof(int), cudaMemcpyDeviceToHost);
 
 	// Print board?
@@ -344,5 +367,5 @@ int main()
 {
 	// Solve medium sized board and go to depth 7 of BFS
 	//solve(test_board_medium, 7);
-	solve(test_board_medium, 1);
+	solve(test_board_medium, 2);
 }
