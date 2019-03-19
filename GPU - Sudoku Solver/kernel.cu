@@ -11,6 +11,7 @@
 #include "board.h"
 #include <chrono>
 #include <string>
+#include <stack>
 
 // Function to return integer array of board state
 //__device__ void board_to_ints(bool ** _board) //was int *
@@ -108,7 +109,8 @@ __device__ bool is_legal(bool ** _board)
 
 __device__ bool is_legal_1D(int *_board)
 {
-	for (int i = 0; i < BOARD_SIZE; i++) {
+	for (int i = 0; i < BOARD_SIZE; i++) 
+	{
 		int row = i / SUB_BOARD_SIZE;
 		int col = i % SUB_BOARD_SIZE;
 
@@ -1052,12 +1054,12 @@ __global__ void BackTracker(int * all_boards, int * solved_board)
 	//If stuck, then quit
 }
 
-__global__ void ValidBoards(int *_all_boards, int *_solved_board) {
+__global__ void ValidBoards(int **_all_boards, int *_solved_board) 
+{
 	int t_idx = blockDim.x * blockIdx.x + threadIdx.x;
-	if (is_legal_1D(&_all_boards[t_idx])) {
-		for (int i = 0; i < 81; i++) {
-			_solved_board[i] = _all_boards[i];
-		}
+	if (is_legal_1D(_all_boards[t_idx])) 
+	{
+		_solved_board = _all_boards[t_idx];
 	}
 }
 
@@ -1326,7 +1328,6 @@ bool BackTrack(Board * _board, int emptyCells)
 {
 	//WARNING: current DS does not hold potential values - only actual values
 
-
 	cudaEvent_t startMem, stopMem, startOp, stopOp;
 	cudaEventCreate(&startMem);
 	cudaEventCreate(&stopMem);
@@ -1341,42 +1342,51 @@ bool BackTrack(Board * _board, int emptyCells)
 	}
 
 	std::stack<int*> spawned = SpawnBoards(_board);
-	int size = spawned.size();
+	const int size = spawned.size();
+
 	int **all_boards = new int*[size];
 	for (int i = 0; i < spawned.size(); i++) {
 		all_boards[i] = new int[81];
 	}
-	//int *host_all_boards = (int *)malloc((BOARD_SIZE) * spawned.size() * sizeof(int));
+
+	//answer boards
 	int *host_answer_board = (int *)malloc(BOARD_SIZE * sizeof(int));
 	int *device_answer_board;
-
-	// Transfer stack of boards to array
-
-	for (int i = 0; i < size; i++) {
-			
-		for (int j = 0; j < 81; j++) {
-			int* next_board = spawned.top();
-			all_boards[i][j] = next_board[j];
-			std::cout << all_boards[i][j] << std::endl;
-		}
-		spawned.pop();
-	}
-
-	for (int i = 0; i < size; i++) {
-		cudaMalloc((void **)&all_boards[i], (BOARD_SIZE) * sizeof(int));
-	}
-	//int * host_start_board = _board->board_to_ints(); //Convert _board into ints
-	cudaMalloc((void **)&all_boards, (BOARD_SIZE) * spawned.size() * sizeof(int));
 	cudaMalloc((void **)&device_answer_board, (BOARD_SIZE) * sizeof(int));
+	//All boards
+	//int **host_temp_all_boards = (int **)malloc(size * sizeof(int*));
+	int **host_temp_all_boards = new int*[size];
+	int **device_all_boards;
+	cudaMalloc((void **)&device_all_boards, (size) * sizeof(int *));
+	for (int i = 0; i < size; i++)
+	{
+		cudaMalloc((void **)&host_temp_all_boards[i], (BOARD_SIZE) * sizeof(int));
+	}
 
 	// start memory + solver timing
 	cudaEventRecord(startMem);
 
-	////Copy 2D bool array to device
-	//cudaStatus = cudaMemcpy(device_start_board, host_start_board, (BOARD_SIZE) * sizeof(int), cudaMemcpyHostToDevice);
-	//if (cudaStatus != cudaSuccess) {
-	//	fprintf(stderr, "cudaMemcpy failed!");
-	//}
+	cudaStatus = cudaMemcpy(device_all_boards, host_temp_all_boards, (size) * sizeof(int *), cudaMemcpyHostToDevice);
+	if (cudaStatus != cudaSuccess) 
+	{
+		fprintf(stderr, "cudaMemcpy failed!");
+	}
+
+	// Transfer stack of boards to array
+	for (int i = 0; i < size; i++) {
+			
+		for (int j = 0; j < BOARD_SIZE; j++) 
+		{
+			int* next_board = spawned.top();
+			all_boards[i][j] = next_board[j];
+			if (cudaStatus != cudaSuccess) {
+				fprintf(stderr, "cudaMemcpy failed!");
+			}
+			//std::cout << all_boards[i][j] << std::endl;
+		}
+		cudaStatus = cudaMemcpy(host_temp_all_boards[i], all_boards[i], (BOARD_SIZE) * sizeof(int), cudaMemcpyHostToDevice);
+		spawned.pop();
+	}
 
 	//Start timing math only
 	cudaEventRecord(startOp);
@@ -1387,8 +1397,7 @@ bool BackTrack(Board * _board, int emptyCells)
 	dim3 dimBlock(blocks, threads);
 
 	////Call Kernel
-	//ValidBoards<<<1, 1>>>(all_boards, device_answer_board);
-
+	ValidBoards<<<dimGrid, dimBlock >>>(device_all_boards, device_answer_board);
 
 	cudaStatus = cudaGetLastError();
 	if (cudaStatus != cudaSuccess) {
@@ -1399,12 +1408,14 @@ bool BackTrack(Board * _board, int emptyCells)
 	cudaEventRecord(stopOp);
 
 	//Copy back to host
-	cudaMemcpy(host_answer_board, device_answer_board, (BOARD_SIZE) * spawned.size() * sizeof(int), cudaMemcpyDeviceToHost);
+	cudaMemcpy(host_answer_board, device_answer_board, (BOARD_SIZE) * sizeof(int), cudaMemcpyDeviceToHost);
 
+	std::cout << "Back Tracking Solution:\n";
 	print_board_1d(host_answer_board);
 
 	Board *ans = new Board();
 	ans->set_board(host_answer_board);
+	std::cout << "Back Tracking Solution after converting to Board Class:\n";
 	ans->print_board();
 
 	//Stop memory timing: sync must go here or it loses these timing events
@@ -1419,7 +1430,7 @@ bool BackTrack(Board * _board, int emptyCells)
 	float millisecondsMem = 0;
 	cudaEventElapsedTime(&millisecondsOp, startOp, stopOp);
 	cudaEventElapsedTime(&millisecondsMem, startMem, stopMem);
-	std::cout << "Spawn Boards Time:\n";
+	std::cout << "Back Tracking Time:\n";
 	PrintTiming(millisecondsOp, millisecondsMem);
 
 	///******************************************BackTrack section*****************************************/
@@ -1458,9 +1469,9 @@ bool BackTrack(Board * _board, int emptyCells)
 	//	_board->board[i][host_solved_board[i]] = true;
 	//}
 
-	free(all_boards);
-	free(host_answer_board);
-	cudaFree(device_answer_board);
+	//free(all_boards);
+	//free(host_answer_board);
+	//cudaFree(device_answer_board);
 	return false;
 }
 
