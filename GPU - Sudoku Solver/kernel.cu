@@ -20,6 +20,8 @@
 #define SUB_BOARD_SIZE 9
 #define SUB_BOARD_DIM 3
 
+#define THREAD_PER_BLOCK 1024
+
 #pragma region Boards
 /*Boards*/
 // https://www.puzzles.ca/sudoku_puzzles/sudoku_easy_487.html
@@ -246,36 +248,56 @@ __global__ void SolveBoard(int **_all_boards, int *_solved_board) {
 
 void solve(int *board, int depth) {
 
+	int h_solution[BOARD_SIZE];
 
 	int *new_boards;
 	int *old_boards;
 	int *solution;
-	int *board_num;
-	int host_solution[SUB_BOARD_SIZE*SUB_BOARD_SIZE];
+	int *next_board_num;
 
-	int DEPTH = 7;
+	const int memSize = 81 * pow(9, depth);
 
-	const int memSize = 81 * pow(9, DEPTH);
-
-	// alloc device memory
+	// allocate device memory and set everything to 0
+	cudaMalloc(&next_board_num, sizeof(int));
+	cudaMalloc(&solution, BOARD_SIZE * sizeof(int));
 	cudaMalloc(&new_boards, memSize * sizeof(int));
 	cudaMalloc(&old_boards, memSize * sizeof(int));
-	cudaMalloc(&solution, SUB_BOARD_SIZE * SUB_BOARD_SIZE * sizeof(int));
-	cudaMalloc(&board_num, sizeof(int));
 
-	cudaMemset(board_num, 0, sizeof(int));
+	cudaMemset(next_board_num, 0, sizeof(int));
+	cudaMemset(solution, 0, BOARD_SIZE * sizeof(int));
 	cudaMemset(new_boards, 0, memSize * sizeof(int));
 	cudaMemset(old_boards, 0, memSize * sizeof(int));
-	cudaMemset(solution, 0, SUB_BOARD_SIZE * SUB_BOARD_SIZE * sizeof(int));
 
+
+	// BFS on GPU
+
+	// copy starting board to device memory
+	cudaMemcpy(old_boards, board, BOARD_SIZE * sizeof(int), cudaMemcpyHostToDevice);
+
+	// 1 due to starting board
+	int prev_board_num = 1;
+	int *prev_boards = new_boards;
 	for (int i = 0; i < depth; i++) {
 
-		/// Generate Board
-		/// Save New Boards
-		/// Fix indices
-		/// reiterate
+		// Need 1 thread per 
+		int num_blocks = (prev_board_num + THREAD_PER_BLOCK - 1) / THREAD_PER_BLOCK;
 
+		// need to set next board num to 0 before we start next depth
+		cudaMemset(next_board_num, 0, sizeof(int));
+
+		GenerateBoardsByCell << <num_blocks, THREAD_PER_BLOCK >> > (prev_boards, prev_board_num, new_boards, next_board_num);
+
+		int* temp_board = prev_boards;
+		prev_boards = new_boards;
+		new_boards = temp_board;
+
+		// update the amount of boards in previous depth for next iteration
+		cudaMemcpy(&prev_board_num, next_board_num, sizeof(int), cudaMemcpyDeviceToHost);
 	}
+
+
+	// DFS on GPU
+	// Working on it...
 }
 
 int main()
