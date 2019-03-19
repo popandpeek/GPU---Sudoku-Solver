@@ -741,17 +741,17 @@ void print_boarder(int *board) {
 }
 
 bool Board::is_legal() {
-	for (int i = 0; i < BOARD_SIZE; i++) {
-		int* int_board = board_to_ints();
-		int row = i / SUB_BOARD_SIZE;
-		int col = i % SUB_BOARD_SIZE;
+	//for (int i = 0; i < BOARD_SIZE; i++) {
+	//	int* int_board = board_to_ints();
+	//	int row = i / SUB_BOARD_SIZE;
+	//	int col = i % SUB_BOARD_SIZE;
 
-		if (int_board[i] != 0 ){//////////////////////&& !is_legal_entry(int_board, SUB_BOARD_SIZE, row, col, int_board[i], i)) {
-			print_board();
-			print_cell(i);
-			throw;
-		}
-	}
+	//	if (int_board[i] != 0 ){//////////////////////&& !is_legal_entry(int_board, SUB_BOARD_SIZE, row, col, int_board[i], i)) {
+	//		print_board();
+	//		print_cell(i);
+	//		throw;
+	//	}
+	//}
 	return true;
 }
 
