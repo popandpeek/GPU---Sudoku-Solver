@@ -12,7 +12,13 @@
 #include <iostream>
 #include <fstream>
 
-#define THREADS_PER_BLOCK 512
+//#define THREADS_PER_BLOCK_512 512
+//#define THREADS_PER_BLOCK_256 256
+//#define THREADS_PER_BLOCK_128 128
+const int THREADS_PER_BLOCK_1024 = 1024;
+const int THREADS_PER_BLOCK_512 = 512;
+const int THREADS_PER_BLOCK_256 = 256;
+
 #define BOARD_SIZE 81
 #define SUB_BOARD_SIZE 9
 #define SUB_BOARD_DIM 3
@@ -160,9 +166,8 @@ int* diabolical_test_answer = new int[81]{ 2, 9, 5, 7, 4, 3, 8, 6, 1,
 
 #pragma endregion
 
-// function to examine if there are conflicts or not if cell [row][col] is num
-__device__
-bool noConflicts(int matrix[BOARD_SIZE], int row, int col, int num) {
+//Joshi, M., &Bi, T. (2017, May 25).Maijoshi / ParaSudoku.Retrieved March 18, 2019, from https ://github.com/maijoshi/ParaSudoku
+__device__ bool noConflicts(int matrix[BOARD_SIZE], int row, int col, int num) {
 	if (num <= 0 || num > SUB_BOARD_SIZE) return false;
 	for (int i = 0; i < SUB_BOARD_SIZE; i++) {
 		if (i == row)   continue;
@@ -407,25 +412,78 @@ __global__ void SolveBoard(int *boards, int total_boards, int* solution) {
 	}
 }
 
+void PrintTiming(float _opTime, float _memAndOpTime)
+{
+	std::cout << "\tMemory and Operation time: " << _memAndOpTime << " milliseconds." << std::endl;
+	std::cout << "\tOperation time: " << _opTime << " milliseconds." << std::endl;
+}
+void PrintTiming2(float _opTime, float _memAndOpTime)
+{
+	std::cout << "\tMemory Only time: " << _memAndOpTime << " milliseconds." << std::endl;
+	std::cout << "\tOperation Only time: " << _opTime << " milliseconds." << std::endl;
+}
+
 // Every additional depth guesses one cell with every possible potential
-void GenerateBoardsBFS(int* prev_boards, int* new_board_num, int* new_boards, int depth) {
+void GenerateBoardsBFS(int* prev_boards, int* new_board_num, int* new_boards, int depth, int threads) {
+
+	// Initialize event timers
+	cudaEvent_t startMem, stopMem, startOp, stopOp;
+	cudaEventCreate(&startMem);
+	cudaEventCreate(&stopMem);
+	cudaEventCreate(&startOp);
+	cudaEventCreate(&stopOp);
 
 	// 1 because of the first board. This will then change iteration according to the permutations at each depth
 	int prev_board_num = 1;
-
-	for (int i = 0; i < depth; i++) {
-		int block_num = (prev_board_num + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+	float totalMemTime = 0;
+	float totalOpTime = 0;
+	for (int i = 0; i < depth; i++) 
+	{
+		int block_num = (prev_board_num + threads - 1) / threads;
 		cudaMemset(new_board_num, 0, sizeof(int));
-		GenerateBoardsByCell << <block_num, THREADS_PER_BLOCK >> > (prev_boards, prev_board_num, new_boards, new_board_num);
+		//Start timing math only
+		cudaEventRecord(startOp);
+
+		GenerateBoardsByCell << <block_num, threads >> > (prev_boards, prev_board_num, new_boards, new_board_num);
+
+		//Stop math only timing
+		cudaEventRecord(stopOp);
+
 		int* tmp = prev_boards;
 		prev_boards = new_boards;
 		new_boards = tmp;
+
+		// start memory
+		cudaEventRecord(startMem);
 		cudaMemcpy(&prev_board_num, new_board_num, sizeof(int), cudaMemcpyDeviceToHost);
+		//Stop memory timing: sync must go here or it loses these timing events
+		cudaEventRecord(stopMem);
+		cudaDeviceSynchronize();
+
+		float millisecondsOp = 0;
+		float millisecondsMem = 0;
+		cudaEventElapsedTime(&millisecondsOp, startOp, stopOp);
+		cudaEventElapsedTime(&millisecondsMem, startMem, stopMem);
+
+		totalMemTime += millisecondsMem;
+		totalOpTime += millisecondsOp;
 	}
+
+	//Print Timings
+	std::cout << "Generate Boards Timing for Depth: " << depth << std::endl;
+	PrintTiming2(totalOpTime, totalMemTime);
+	std::cout << std::endl;
 }
 
 // The main solve function
-void solve_board(int * board, int depth) {
+void solve_board(int * board, int depth, int threads) {
+
+	// Initialize event timers
+	cudaEvent_t startMem, stopMem, startOp, stopOp;
+	cudaEventCreate(&startMem);
+	cudaEventCreate(&stopMem);
+	cudaEventCreate(&startOp);
+	cudaEventCreate(&stopOp);
 
 	// Board that wil FIRST hold the old depth boards (first board)
 	int *old_boards;
@@ -456,26 +514,48 @@ void solve_board(int * board, int depth) {
 	cudaMemset(new_boards, 0, memSize * sizeof(int));
 	cudaMemset(solution, 0, BOARD_SIZE * sizeof(int));
 
+	// start memory
+	cudaEventRecord(startMem);
+
 	// Copy the starting board into our storage array 
 	cudaMemcpy(old_boards, board, BOARD_SIZE * sizeof(int), cudaMemcpyHostToDevice);
 
 	// generates a set of boards with the first depth cells filled in
-	GenerateBoardsBFS(old_boards, old_board_num, new_boards, depth);
+	GenerateBoardsBFS(old_boards, old_board_num, new_boards, depth, threads);
 
 	// get the total number of boards back
 	int total_board_num = 1;
 	cudaMemcpy(&total_board_num, old_board_num, sizeof(int), cudaMemcpyDeviceToHost);
 
 	// Now we solve each board per thread on the GPU by DFS
-	int block_num = (total_board_num + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
-	SolveBoard << <total_board_num, THREADS_PER_BLOCK >> > (old_boards, total_board_num, solution);
-	cudaDeviceSynchronize();
+	int block_num = (total_board_num + threads - 1) / threads;
+
+	//Start timing math only
+	cudaEventRecord(startOp);
+	SolveBoard << <block_num, threads >> > (old_boards, total_board_num, solution);
+
+	//Stop math only timing
+	cudaEventRecord(stopOp);
+	
 
 	cudaMemcpy(h_solution, solution, BOARD_SIZE * sizeof(int), cudaMemcpyDeviceToHost);
 
+	//Stop memory timing: sync must go here or it loses these timing events
+	cudaEventRecord(stopMem);
+	cudaDeviceSynchronize();
+
+	float millisecondsOp = 0;
+	float millisecondsMem = 0;
+	cudaEventElapsedTime(&millisecondsOp, startOp, stopOp);
+	cudaEventElapsedTime(&millisecondsMem, startMem, stopMem);
+
+	//Print Timings
+	std::cout << "Solve Board Timing with " << block_num << " blocks and " << threads << " threads.\n";
+	PrintTiming(millisecondsOp, millisecondsMem);
+	std::cout << std::endl;
+
 	// Get the solution and print for correctness
 	print_board_1d(h_solution);
-
 
 	// free all used memory
 	cudaFree(new_boards);
@@ -485,20 +565,33 @@ void solve_board(int * board, int depth) {
 }
 
 
-int main(int argc, char* argv[]) {
+int main()
+{
+	//Have to be ran one at a time.
 
-	int* board = new int[81]{		  
-		0, 0, 0, 0, 0, 0, 3, 0, 0,
-		8, 5, 2, 3, 0, 0, 0, 0, 1,
-		0, 9, 0, 2, 0, 0, 0, 0, 4,
-		9, 7, 4, 0, 0, 0, 0, 0, 0,
-		0, 1, 0, 0, 6, 0, 0, 0, 0,
-		0, 0, 0, 0, 4, 0, 0, 0, 0,
-		6, 0, 9, 0, 8, 0, 0, 3, 7,
-		3, 0, 0, 0, 0, 0, 0, 6, 0,
-		0, 2, 0, 0, 0, 5, 0, 0, 0 };
+	//std::cout << "Easy Board:\n";
+	//solve_board(test_board_easy, 4, 512);
+	//solve_board(test_board_easy, 4, 256);
+	solve_board(test_board_easy, 4, 128);
+	//solve_board(test_board_easy, 4, 64);
+	//solve_board(test_board_easy, 4, 32);
 
-	solve_board(board, 5);
+
+	//std::cout << "Medium Board:\n";
+	//solve_board(test_board_medium, 4, 512);
+	//solve_board(test_board_medium, 4, 256);
+	//solve_board(test_board_medium, 4, 128);
+	//solve_board(test_board_medium, 4, 64);
+	//solve_board(test_board_medium, 4, 32);
+
+
+	std::cout << "Diabolical Board:\n";
+	//solve_board(test_board_diabolical, 4, 512);
+	//solve_board(test_board_diabolical, 4, 256);
+	//solve_board(test_board_diabolical, 4, 128);
+	//solve_board(test_board_diabolical, 4, 64);
+	//solve_board(test_board_diabolical, 4, 32);
+
 
 	return 0;
 }
